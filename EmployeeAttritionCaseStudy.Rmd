@@ -1,0 +1,1823 @@
+---
+title: "Case Study 2 - Employee Attrition"
+author: "Jon Paugh"
+date: "11/18/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Doing Data Science - Case Study 2
+## Employee Attribution
+## Original dataset https://www.kaggle.com/pavansubhasht/ibm-hr-analytics-attrition-dataset
+#### Goal - using the subset of data provided for training, predict the salaries (MonthlyIncome) and Attribution (Attrition = Yes/No) for the two separate validation datasets.
+#### Must use either KNN or Naive Bayes, but can use other techniques too
+
+#### Install packages
+
+```{r}
+install.packages("e1071") #naiveBayes()
+install.packages("caret")
+install.packages("corrplot")
+install.packages("MASS")
+install.packages("Rtools")
+install.packages("randomForest")
+install.packages("fields")
+install.packages("ggthemes")
+install.packages("ROCR")
+```
+
+
+
+## First lets get our data and see how many rows we have.
+#### note that data at the kaggle project has a total of 1470 rows, let's see if we are dealing with the same data set?
+#### We see that we are, which means this dataset was created probably by taking the kaggle dataset, splitting off two 300 row setsets, taking the attrition off one of them, and taking the monthlyIncome off the other
+#### one other difference is that the No Salary and No Attrition data have an "ID" column added. Not sure why this was necessary since the employee rows already contain an employee ID (which should be unique), but that's fine.
+
+
+```{r Employees}
+
+fullTraining = read.csv("CaseStudy2-data.csv")
+nrowsFullTraining = nrow(fullTraining)
+
+ValidationNoAttrition = read.csv("CaseStudy2CompSet No Attrition.csv")
+nrowsValidationNoAttrition = nrow(ValidationNoAttrition)
+ValidationNoSalary = read.csv("CaseStudy2CompSet No Salary.csv")
+nrowsValidaitonNoSalary = nrow(ValidationNoSalary)
+
+print(paste("Number of rows : Full= ",nrowsFullTraining," ValidationNoAttrition = ",nrowsValidationNoAttrition, " ValidationNoSalary = ", nrowsValidaitonNoSalary))
+print(paste("Total rows " ,nrowsFullTraining + nrowsValidationNoAttrition + nrowsValidaitonNoSalary ))
+
+
+
+```
+
+
+# let's try merging to a single dataframe ....
+#### 1470 rows
+
+```{r}
+suppressMessages(library(plyr))
+
+ValidationNoAttrition
+allData <- rbind.fill(fullTraining, ValidationNoAttrition)
+allData
+
+allData <- rbind.fill(allData, ValidationNoSalary)
+allData
+
+nrow(allData)
+
+
+
+
+```
+
+# let's do some feature engineering based on what is needed to improve the attrition prediction results (% attrition one way or another)
+```{r}
+allData$BusinessTravelFrequently = "No"
+allData$BusinessTravelFrequently[allData$BusinessTravel=="Travel_Frequently"] <- "Yes"
+allData$BusinessTravelFrequently = as.factor(allData$BusinessTravelFrequently)
+
+
+allData <- allData %>% mutate(LowEducation = case_when(
+        Education > 4  ~ "No",
+        Education <= 4  ~ "Yes"))
+allData$LowEducation = as.factor(allData$LowEducation)
+allData <- allData %>% mutate(LowEnvironmentalSatisfaction = case_when(
+        EnvironmentSatisfaction > 3  ~ "No",
+        EnvironmentSatisfaction <= 3  ~ "Yes"))
+allData$LowEnvironmentalSatisfaction = as.factor(allData$LowEnvironmentalSatisfaction)
+allData <- allData %>% mutate(LowJobLevel = case_when(
+        JobLevel == 1  ~ "Yes",
+        JobLevel > 1   ~ "No"))
+allData$LowJobLevel = as.factor(allData$LowJobLevel)
+allData <- allData %>% mutate(JobRoleSales = case_when(
+        JobRole == "Sales Representative"  ~ "Yes",
+        JobLevel != "Sales Representative"   ~ "No"))
+allData$JobRoleSales = as.factor(allData$JobRoleSales)
+allData <- allData %>% mutate(HighCompaniesWorked = case_when(
+        NumCompaniesWorked > 5  ~ "Yes",
+        Education <= 5  ~ "No"))
+allData$HighCompaniesWorked = as.factor(allData$HighCompaniesWorked)
+allData <- allData %>% mutate(LowWorkLifeBalance = case_when(
+        WorkLifeBalance == 1  ~ "Yes",
+        WorkLifeBalance > 1  ~ "No"))
+allData$LowWorkLifeBalance = as.factor(allData$LowWorkLifeBalance)
+allData <- allData %>% mutate(JobRoleMed = case_when(
+        JobRole == "Human Resources"  ~ "Yes",
+        JobRole == "Laboratory Technician"  ~ "Yes",
+        JobRole == "Research Scientist"  ~ "Yes",
+        JobRole == "Sales Executive"  ~ "Yes",
+        TRUE ~ "No"))
+allData$JobRoleMed = as.factor(allData$JobRoleMed)
+
+
+str(allData)
+
+        
+
+
+```
+
+
+# let's fix some variables that are numeric but should be factors
+```{r}
+allData$Education <- as.factor(allData$Education)
+allData$EnvironmentSatisfaction <- as.factor(allData$EnvironmentSatisfaction)
+allData$JobInvolvement <- as.factor(allData$JobInvolvement)
+allData$JobLevel <- as.factor(allData$JobInvolvement)
+allData$JobSatisfaction <- as.factor(allData$JobSatisfaction)
+allData$PerformanceRating <- as.factor(allData$PerformanceRating)
+allData$RelationshipSatisfaction <- as.factor(allData$RelationshipSatisfaction)
+allData$StockOptionLevel <- as.factor(allData$StockOptionLevel)
+allData$WorkLifeBalance <- as.factor(allData$WorkLifeBalance)
+
+```
+
+
+
+
+# let's check if our data looks reasonable and that we are not missing any fields?
+#### we see that we are missing 300 attrition and 300 monthly income - that's what we expect (we had separate DF's of just those sizes)
+#### There is NO missing data here, yay! One problem down.
+### there data looks good, Some comments:
+#### Educaition is a number, but maybe should be a factor?
+#### employee count is always 1? Useless
+#### employee number is an identfier and we should not be using it for prediction probably? It could indicate how long the employee has been there but that should be covered elsewhere
+#### Environmental satisfaction is also a numeric - could be a factor?
+#### Other fields that could be factors - JobInvolvement, JobLevel, JobSatisfaction
+#### what is the difference between monthlyIncome and MonthlyRate
+#### WHat is numcompaniesWorked? Is this past employment? Either way it's definitely numeric not a factor
+#### What is stockOptionLevel?
+#### What is "WOrkLifeBalance"? That's really odd - how could they even measure that?!? OK...
+#### YEars at company - also YearsInCurrentRole - are these related to YearsSinceLastPromotion? 
+#### I guess you could be in a different role, but not prompted
+#### these years are all somewhate related
+
+
+```{r}
+str(allData)
+
+
+ sapply(allData, function(x) sum(is.na(x)))
+```
+
+
+
+# rather than use the original datasets as we got them, let's take our data from the combined dataset, because that will sure all the  columns are identifical
+
+```{r}
+train  <- allData[(! is.na(allData$Attrition)) ,]
+train <-  train[(! is.na(train$MonthlyIncome )), ]
+nrow(train) 
+# back to our original 870
+predictAttr = allData[ is.na(allData$Attrition ),]
+nrow(predictAttr)
+
+predictMonthIncome = allData[ is.na(allData$MonthlyIncome),]
+nrow(predictMonthIncome)
+
+trainAndAttrit =rbind.fill(train, predictAttr) 
+trainAndMonthlyIncome = rbind.fill(train, predictMonthIncome)
+
+
+
+```
+
+
+# for reference here are the columns:
+### 1 - ID
+### 2 - Age 
+### 3 - Attrition
+### 4 - Business Travel
+### 5 - DailyRate
+### 6 - Department
+### 7 - DistanceFromHome
+### 8 - Education
+### 9 - EducationField
+### 10 - Employee Count
+### 11 - EmployeeNumber
+### 12 - EnvironmentSatisfaction
+### 13 - Gender 
+### 14 - Hourly Rate
+### 15 - JobInvolvement 
+### 16 - JobLevel
+### 17 - Job ROle
+### 18 - Job Satisfcation
+### 19 - Marital Status
+### 20 - MonthlyIncome
+### 21 - MonthlyRate
+### 22 NumCompaniesWorked
+### 23 - Over18
+### 24 - overTime
+### 25 - PercentSalaryHike
+### 26 - PerformanceRating
+### 27 - RelationSatisfaction
+### 28 - standardHours
+### 29 - StockOptionlevel
+### 30 - TotalWorkingYears
+### 31 - TrainingTimesLastYear
+### 32 - WorkLifeBalance
+### 33 - YEarsAtCompany
+### 34 - YearsInCurrentRole
+### 35 - YearsSinceLastPromotion
+### 36 - YearsWithCurrManager - 
+
+# All of these fields look reasonable to use except :
+# 1 - ID, 3 - Attrition (cant use the field to predict itself), 10 - Employee Count (it's always 1 so why bother),
+# 11 - EmployeeNumber should be a random # - it could have some usefulness or it could lead us astray so let's try without
+# also the variables 23 - Over18 is always the same value...
+# and the variable 28 - StandardHours also has the same value always
+
+```{r}
+
+# create a list of the fields we want to use taking out the ones we dont
+goodToPredictAttr = c(2,3,4,5,6,7,8,9,10,12,13,14,15,16,17,18,19,20,21,22,24,25,26,27,29,30,31,32,33,34,35)
+attrField = c(3)
+
+head(train[goodToPredictAttr])
+
+```
+
+# lets check the correlation of our variables
+### This shows correlation between:
+### HIGH - MothlyIncome + TotalWorkingYears, age + TotalWorkingYears, Joblevel + TotalWorkingYears, PercentSalaryHike + PerformanceRating, YearsAtCompany + YearsAtCurrentRole, YearsAtCompany + YearsWithCurrManager
+### MED - Age + JobLevel, JobLevel + YearsAtCompany , Monthly Income with TraingTimeLastYear, YearsAtCompany, YearsInCurrentRole, YearsSinceLastPromotion, YearsWithCurrManager
+
+```{r}
+
+suppressMessages(library(corrplot))
+
+dataHasMonthlyIncome <- allData %>% filter(!is.na(allData$MonthlyIncome))
+
+numVars <- sapply(dataHasMonthlyIncome, is.numeric)
+correlationMatrix <- cor(dataHasMonthlyIncome[,numVars])
+# same thing but now with p value
+
+corrplot(correlationMatrix,main='\nCorrelation Plot with P Values', type="upper", 
+         sig.level = 0.05, tl.cex = 0.75, number.cex=1)
+
+
+numVars
+
+
+ageAndYearCars = c("Age", "MonthlyIncome","TotalWorkingYears", "YearsAtCompany", "YearsInCurrentRole", "YearsSinceLastPromotion", "YearsWithCurrManager")
+correlationMatrixSomeNumeric <- cor(dataHasMonthlyIncome[,ageAndYearCars])
+# same thing but now with p value
+
+corrplot(correlationMatrixSomeNumeric,main='\nCorrelation Plot with P Values', type="upper", 
+         sig.level = 0.05, tl.cex = 0.75, number.cex=1)
+
+
+```
+
+# Do some exploratory data analysis for the relationship between the various variables and the attrition
+# very significant columns : Department (especially sales has higher), 
+# somewhat significant columns
+
+```{r}
+library(ggthemes)
+ggplot(data=train, aes(train$Attrition)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) + ylab("percent") + theme_economist() + ggtitle("Histogram of Attrition") + xlab("Attrition") 
+
+
+ggplot(data=train, aes(x="", y = Attrition, fill=train$Attrition)) + 
+  geom_bar(stat="identity", width=1, positions = position_fill()) + 
+   coord_polar("y", start=0) +
+  ylab("percent") + theme_economist() + ggtitle("Histogram of Busines Travel") + xlab("Busines Travel") + scale_fill_discrete(name = "Attrition:") + facet_wrap(train$BusinessTravel)
+
+
+ggplot(data=train, aes(x=train$DailyRate, fill=train$Attrition)) + 
+  geom_histogram(bins=50) + theme_economist() + ggtitle("Histogram of Daily Rate") + xlab("Daily Rate") + geom_density(alpha=.3) + scale_fill_discrete(name = "Attrition:")
+
+
+ggplot(data=train, aes(train$Department, fill=train$Attrition)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..)), position="dodge") + ylab("percent") + theme_economist() + ggtitle("Histogram of Department") + xlab("Department") + scale_fill_discrete(name = "Attrition:")
+
+
+
+ggplot(data=train, aes(train$Education, fill=train$Attrition)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..)), position="dodge") + ylab("percent") + theme_economist() + ggtitle("Histogram of Education") + xlab("Education") + scale_fill_discrete(name = "Attrition:")
+
+
+
+```
+
+
+# try to get a nice percentage facet wrap
+
+```{r}
+
+library(dplyr)
+library(datasets)
+library(ggplot2)
+data(mtcars)
+head(mtcars)
+
+# creating a dataframe
+df <- dplyr::group_by(mtcars, .dots = c('cyl', 'am')) %>%
+  dplyr::summarize(counts = n()) %>%
+  dplyr::mutate(perc = (counts / sum(counts)) * 100) %>%
+  dplyr::arrange(desc(perc))
+
+# preparing the plot
+ggplot2::ggplot(df, aes('', counts)) +
+  geom_col(
+    position = 'fill',
+    color = 'black',
+    width = 1,
+    aes(fill = factor(am))
+  ) +
+  facet_wrap(~cyl, labeller = "label_both") +
+  geom_label(
+    aes(label = paste0(round(perc), "%"), group = factor(am)),
+    position = position_fill(vjust = 0.5),
+    color = 'black',
+    size = 5,
+    show.legend = FALSE
+  ) +
+  coord_polar(theta = "y")
+
+```
+# use fuction to show percentages
+
+```{r}
+
+ShowPieChart <- function(columnBy, columnToShow, titleName)
+{
+  df <- dplyr::group_by(train, .dots = c(columnBy, columnToShow)) %>%
+    dplyr::summarize(counts = n()) %>%
+    dplyr::mutate(perc = (counts / sum(counts)) * 100) %>%
+    dplyr::arrange_(.dots=c(columnBy, columnToShow))
+  
+  
+  # preparing the plot
+  ggplot2::ggplot(df, aes('', counts)) +
+    geom_col(
+      position = 'fill',
+      color = 'black',
+      width = 1,
+      aes(fill = Attrition)
+    ) +
+    ggtitle(titleName) +
+    facet_wrap(paste("~",columnBy), labeller = "label_both") +
+    geom_label(
+      aes(label = paste0(round(perc), "%"), group = "Attrition"),
+      position = position_fill(vjust = 0.5),
+      color = 'black',
+      size = 5,
+      show.legend = FALSE
+    ) + scale_fill_discrete(name = "Attrition:") +
+    coord_polar(theta = "y")
+}
+
+ShowPieChart("BusinessTravel", "Attrition", "Attrition by Business Travel")
+ShowPieChart("Department", "Attrition", "Attrition by Department")
+ShowPieChart("Education", "Attrition", "Attrition by Education")
+ShowPieChart("EducationField", "Attrition", "Attrition by Education Field")
+ShowPieChart("EnvironmentSatisfaction", "Attrition", "Attrition by Environmental Satisfaction")
+ShowPieChart("Gender", "Attrition", "Attrition by Gender")
+ShowPieChart("JobLevel", "Attrition", "Attrition by Job Level" )
+ShowPieChart("JobRole", "Attrition", "Attrition by Job Role")
+ShowPieChart("JobSatisfaction", "Attrition", "Attrition by Job Satisfaction")
+ShowPieChart("MaritalStatus", "Attrition", "Attrition by Marital Status")
+ShowPieChart("NumCompaniesWorked", "Attrition", "Attrition by Number of COmpanies WOrked")
+ShowPieChart("OverTime", "Attrition", "Attritio by Overtime")
+ShowPieChart("PerformanceRating", "Attrition", "Attrition by Performance Rating")
+ShowPieChart("RelationshipSatisfaction", "Attrition", "Attrition by Relationship Satisfaction")
+ShowPieChart("StockOptionLevel", "Attrition", "Attrition by Stock Option Level")
+ShowPieChart("WorkLifeBalance", "Attrition", "Attritio by Work Life Balance")
+
+
+
+```
+
+
+# This is a quick but not as pretty review of the continuous variables by Attrition
+```{r}
+
+NiceBoxPlot <- function(columnBy, columnToShow, columnByDesc, columnToShowDesc)
+{
+
+
+ggplot(train, aes(x=train[,columnBy], y=train[,columnToShow])) + geom_boxplot() +
+    stat_summary(fun.y=mean, geom="point", shape=5, size=4) +
+  ggtitle(paste(columnByDesc, "by",columnToShowDesc)) + xlab("Attrition") + ylab(columnToShowDesc) +
+  theme_economist()
+
+}
+
+NiceBoxPlot("Attrition", "DistanceFromHome", "Attrition", "Distance from Home")
+NiceBoxPlot("Attrition", "HourlyRate", "Attrition", "Hourly Rate")
+NiceBoxPlot("Attrition", "MonthlyIncome", "Attrition", "Monthly Income")
+NiceBoxPlot("Attrition", "MonthlyRate", "Attrition", "Monthly Rate")
+NiceBoxPlot("Attrition", "NumCompaniesWorked", "Attrition", "Number of Companies Worked")
+NiceBoxPlot("Attrition", "PercentSalaryHike", "Attrition", "Percent Salary Hike")
+NiceBoxPlot("Attrition", "TotalWorkingYears", "Attrition", "Total Working Years")
+NiceBoxPlot("Attrition", "TrainingTimesLastYear", "Attrition", "Training Times Last Year")
+NiceBoxPlot("Attrition", "YearsAtCompany", "Attrition", "Years at Company")
+NiceBoxPlot("Attrition", "YearsInCurrentRole", "Attrition", "Years in Current Role")
+NiceBoxPlot("Attrition", "YearsSinceLastPromotion", "Attrition", "Years since Last Promotion")
+NiceBoxPlot("Attrition", "YearsWithCurrManager", "Attrition", "Years with Current Manager")
+
+
+
+```
+
+
+
+
+# Let's start off with Naive Bayes and predict attrition
+## This very basic model with absolutely nothing changed gives us 85% accuracy, 90% sensitivity and 61% specificity.
+## But we dont know from this what our accuracy is on the validation data set, and 61% is awfully close to 60. Would be nice to increase this higher
+
+```{r}
+
+suppressMessages(library(e1071))
+suppressMessages(library(caret))
+
+
+modelBayes = naiveBayes(Attrition~.,data = train[goodToPredictAttr])
+#model
+result = predict(modelBayes,train[goodToPredictAttr])
+
+# result is our predictions, but we have values on the original, let's compare to those
+
+CM = confusionMatrix(table(result,train$Attrition))
+CM
+
+str(result)
+length(result)
+
+
+```
+
+# write out the naive bayes results
+
+```{r}
+
+predictAttritionResultsValidation = predict(modelBayes, predictAttr)
+
+# create a separate dataset with attrition filled in to avoid future confusion
+predictAttrFilledIn = predictAttr
+# use the predicted values
+
+predictAttrFilledIn
+
+predictAttrFilledIn$Attrition = predictAttritionResultsValidation
+predictAttrWithID = predictAttrFilledIn[, c("ID", "Attrition")]
+write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv")
+predictAttrWithEmployeeNumber = predictAttrFilledIn[, c("EmployeeNumber", "Attrition")]
+write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv")
+
+# and print out a nice confusion matrix
+
+draw_confusion_matrix <- function(cmtrx) {
+
+total <- sum(cmtrx$table)
+
+res <- as.numeric(cmtrx$table)
+
+# Generate color gradients. Palettes come from RColorBrewer.
+
+greenPalette <- c("#F7FCF5","#E5F5E0","#C7E9C0","#A1D99B","#74C476","#41AB5D","#238B45","#006D2C","#00441B")
+
+redPalette <- c("#FFF5F0","#FEE0D2","#FCBBA1","#FC9272","#FB6A4A","#EF3B2C","#CB181D","#A50F15","#67000D")
+
+getColor <- function (greenOrRed = "green", amount = 0) {
+
+if (amount == 0)
+
+return("#FFFFFF")
+
+palette <- greenPalette
+
+if (greenOrRed == "red")
+
+palette <- redPalette
+
+colorRampPalette(palette)(100)[10 + ceiling(90 * amount / total)]
+
+}
+
+# set the basic layout
+
+layout(matrix(c(1,1,2)))
+
+par(mar=c(2,2,2,2))
+
+plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+
+title('CONFUSION MATRIX - Training Data', cex.main=2)
+
+# create the matrix
+
+classes = colnames(cmtrx$table)
+
+rect(150, 430, 240, 370, col=getColor("green", res[1]))
+
+text(195, 435, classes[1], cex=1.2)
+
+rect(250, 430, 340, 370, col=getColor("red", res[3]))
+
+text(295, 435, classes[2], cex=1.2)
+
+text(125, 370, 'Predicted', cex=1.3, srt=90, font=2)
+
+text(245, 450, 'Actual', cex=1.3, font=2)
+
+rect(150, 305, 240, 365, col=getColor("red", res[2]))
+
+rect(250, 305, 340, 365, col=getColor("green", res[4]))
+
+text(140, 400, classes[1], cex=1.2, srt=90)
+
+text(140, 335, classes[2], cex=1.2, srt=90)
+
+# add in the cmtrx results
+
+text(195, 400, res[1], cex=1.6, font=2, col='white')
+
+text(195, 335, res[2], cex=1.6, font=2, col='white')
+
+text(295, 400, res[3], cex=1.6, font=2, col='white')
+
+text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+# add in the specifics
+
+plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS", xaxt='n', yaxt='n')
+
+text(10, 85, names(cmtrx$byClass[1]), cex=1.2, font=2)
+
+text(10, 70, round(as.numeric(cmtrx$byClass[1]), 3), cex=1.2)
+
+text(30, 85, names(cmtrx$byClass[2]), cex=1.2, font=2)
+
+text(30, 70, round(as.numeric(cmtrx$byClass[2]), 3), cex=1.2)
+
+text(50, 85, names(cmtrx$byClass[5]), cex=1.2, font=2)
+
+text(50, 70, round(as.numeric(cmtrx$byClass[5]), 3), cex=1.2)
+
+text(70, 85, names(cmtrx$byClass[6]), cex=1.2, font=2)
+
+text(70, 70, round(as.numeric(cmtrx$byClass[6]), 3), cex=1.2)
+
+text(90, 85, names(cmtrx$byClass[7]), cex=1.2, font=2)
+
+text(90, 70, round(as.numeric(cmtrx$byClass[7]), 3), cex=1.2)
+
+# add in the accuracy information
+
+text(30, 35, names(cmtrx$overall[1]), cex=1.5, font=2)
+
+text(30, 20, round(as.numeric(cmtrx$overall[1]), 3), cex=1.4)
+
+text(70, 35, names(cmtrx$overall[2]), cex=1.5, font=2)
+
+text(70, 20, round(as.numeric(cmtrx$overall[2]), 3), cex=1.4)
+
+}
+
+
+
+draw_confusion_matrix(CM)
+
+
+
+```
+# the prior test we created the confusion matrix based on the training data. Let's so a test/train split and assess
+
+```{r}
+
+
+set.seed(1)
+splitPerc = .7
+iterations = 50
+masterAcc = matrix(nrow = iterations, ncol = 1)
+masterSpec = matrix(nrow = iterations, ncol = 1)
+masterSens = matrix(nrow = iterations, ncol = 1)
+
+  
+for(j in 1:iterations)
+{
+  trainIndices = sample(1:dim(train)[1],round(splitPerc * nrow(train)))
+  trainData = train[trainIndices,]
+  testData = train[-trainIndices,]
+  modelBayes = naiveBayes(Attrition~.,data = trainData[goodToPredictAttr])
+  
+  predictAttrBayes = predict(modelBayes, testData)
+
+  CM = confusionMatrix(table(predictAttrBayes, as.factor(testData$Attrition)))
+  masterAcc[j,1] = CM$overall[1]
+  masterSens[j,1] = CM$byClass[1][[1]] # sensitivity
+  masterSpec[j,1] = CM$byClass[2][[1]] # specificity
+}
+
+MeanAcc = colMeans(masterAcc)
+MeanAcc
+
+MeanSens = colMeans(masterSens)
+MeanSens
+
+MeanSpec = colMeans(masterSpec)
+MeanSpec
+
+```
+
+
+
+
+
+# What we really want to do though, is use a single variable for each category for these category variables. This page refers to this as creatig a "Contrast Matrix"
+# http://www.sthda.com/english/articles/40-regression-analysis/163-regression-with-categorical-variables-dummy-coding-essentials-in-r/
+# 
+
+
+
+
+
+# first some attempts at doing many comparisons at once. These work OK, but ultimately are not very high production values
+
+```{r}
+
+numVars <- sapply(allData, is.numeric)
+head(train)
+
+caret::featurePlot(x = train[,c(2,5,7)], y = train$MonthlyIncome, plot="pairs", auto.key = list(columns=3))
+
+
+
+# this is interesting but it's just too small and hard to modify the labels
+suppressMessages(library(tidyr))
+suppressMessages(library(dplyr))
+
+notNumeric <- function(x)
+{
+    ! is.numeric(x)
+}
+
+
+select_if(train,is.numeric) %>%
+  gather(-MonthlyIncome, key = "var", value = "value") %>% 
+  ggplot(aes(x = value, y = MonthlyIncome)) +
+    geom_point() +
+    facet_wrap(~ var, scales = "free") +
+    theme_economist()
+
+
+
+
+```
+
+
+
+
+# analysis at a field by field level
+
+```{r}
+# business travel
+suppressMessages(library(ggplot2))
+suppressMessages(library(ggthemes))
+
+fill <- "#4271AE"
+line <- "#1F3552"
+
+ggplot(data=trainAndAttrit, aes(trainAndAttrit$MonthlyIncome)) + 
+  geom_histogram() + theme_economist() + ggtitle("Histogram of Monthly Income") + xlab("Monthly Income")
+
+ggplot(trainAndAttrit, aes(x=Age, y=MonthlyIncome), xlab="Age", ylab="Monthly Income") + ggtitle("Age vs Daily Rate") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+
+ggplot(trainAndAttrit, aes(x = BusinessTravel, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Business Travel") +
+        ggtitle("Boxplot of Business Travel") +
+        theme_economist() 
+
+ggplot(trainAndAttrit, aes(x=DailyRate, y=MonthlyIncome), xlab="Daily Rate", ylab="Monthly Income") + ggtitle("Monthly Income vs Daily Rate") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+
+ggplot(trainAndAttrit, aes(x = Department, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Department") +
+        ggtitle("Boxplot of Department") +
+        theme_economist() 
+
+ggplot(trainAndAttrit, aes(x=DistanceFromHome, y=MonthlyIncome), xlab="Distance From Home", ylab="Monthly Income") + ggtitle("Monthly Income vs Distance From Home") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+
+ggplot(trainAndAttrit, aes(x = EducationField, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Eduction Field") +
+        ggtitle("Boxplot Monthly Income by  Eduction Field") +
+        theme_economist() 
+
+ggplot(trainAndAttrit, aes(x = Education, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Eduction") +
+        ggtitle("Boxplot Monthly Income by  Education") +
+        theme_economist() 
+
+
+ggplot(trainAndAttrit, aes(x = EnvironmentSatisfaction, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Environmental Satisfaction") +
+        ggtitle("Boxplot Monthly Income by Environmental Satisfaction") +
+        theme_economist() 
+
+
+ggplot(trainAndAttrit, aes(x = Gender, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Gender") +
+        ggtitle("Boxplot Monthly Income by Gender") +
+        theme_economist() 
+
+
+
+ggplot(trainAndAttrit, aes(x=HourlyRate, y=MonthlyIncome), xlab="Hourly Rate", ylab="Monthly Income") + ggtitle("Monthly Income vs Hourly Rate") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+ggplot(trainAndAttrit, aes(x = JobInvolvement, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Job Involvement") +
+        ggtitle("Boxplot Monthly Income by Job Involvement") +
+        theme_economist() 
+
+ggplot(trainAndAttrit, aes(x = JobLevel, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Job Level") +
+        ggtitle("Boxplot Monthly Income by Job Level") +
+        theme_economist() 
+
+
+
+ggplot(trainAndAttrit, aes(x = JobSatisfaction, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Job Satisfaction") +
+        ggtitle("Boxplot Monthly Income by Job Satisfaction") +
+        theme_economist() 
+
+ggplot(trainAndAttrit, aes(x = MaritalStatus, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Marital Status") +
+        ggtitle("Boxplot Monthly Income by Marital Status") +
+        theme_economist() 
+
+ggplot(trainAndAttrit, aes(x=MonthlyRate, y=MonthlyIncome), xlab="Monthly Rate", ylab="Monthly Income") + ggtitle("Monthly Income vs Monthly Rate") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+
+ggplot(trainAndAttrit, aes(x=NumCompaniesWorked, y=MonthlyIncome), xlab="Number of Companies Worked", ylab="Monthly Income") + ggtitle("Monthly Income vs Number of Companies Worked") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+
+ggplot(trainAndAttrit, aes(x = OverTime, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Overtime") +
+        ggtitle("Boxplot Monthly Income by overtime") +
+        theme_economist() 
+
+
+ggplot(trainAndAttrit, aes(x=PercentSalaryHike, y=MonthlyIncome), xlab="Percentage Salary Hike", ylab="Monthly Income") + ggtitle("Monthly Income vs Percentage Salary Hike") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+
+ggplot(trainAndAttrit, aes(x = PerformanceRating, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Performance Rating") +
+        ggtitle("Boxplot Monthly Income by Performance Rating") +
+        theme_economist() 
+
+ggplot(trainAndAttrit, aes(x = RelationshipSatisfaction, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Relationship Satisfaction") +
+        ggtitle("Boxplot Monthly Income by Relationship Satisfaction") +
+        theme_economist() 
+
+
+ggplot(trainAndAttrit, aes(x = StockOptionLevel, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Stock Option Level") +
+        ggtitle("Boxplot Monthly Income by Stock Level") +
+        theme_economist() 
+
+ggplot(trainAndAttrit, aes(x=TotalWorkingYears, y=MonthlyIncome), xlab="Total Working Years", ylab="Monthly Income") + ggtitle("Monthly Income vs Total Working Years") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+
+ggplot(trainAndAttrit, aes(x=TrainingTimesLastYear, y=MonthlyIncome), xlab="Training Times Last Year", ylab="Monthly Income") + ggtitle("Monthly Income vs Training Times Last Year") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+
+ggplot(trainAndAttrit, aes(x = WorkLifeBalance, y = MonthlyIncome)) +
+        geom_boxplot() +
+        scale_y_continuous(name = "Monthly Income") +
+        scale_x_discrete(name = "Work Life Balance") +
+        ggtitle("Boxplot Monthly Income by Work Life Balance") +
+        theme_economist() 
+
+
+ggplot(trainAndAttrit, aes(x=YearsAtCompany, y=MonthlyIncome), xlab="Years at Company", ylab="Monthly Income") + ggtitle("Monthly Income vs Years at Company") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+ggplot(trainAndAttrit, aes(x=YearsInCurrentRole, y=MonthlyIncome), xlab="Years in Current Role", ylab="Monthly Income") + ggtitle("Monthly Income vs Years in Current Role") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+
+ggplot(trainAndAttrit, aes(x=YearsSinceLastPromotion, y=MonthlyIncome), xlab="Years since Last Promotion", ylab="Monthly Income") + ggtitle("Monthly Income vs Years since Last Promotion") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+ggplot(trainAndAttrit, aes(x=YearsWithCurrManager, y=MonthlyIncome), xlab="Years with Current Manager", ylab="Monthly Income") + ggtitle("Monthly Income vs Years with Current Manager") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+# let's check correlation between all these year variables
+
+ageRelated = c(2, 20,30, 33, 34, 35, 36)
+pairs(train[,ageRelated], pch=19)
+
+ggplot(trainAndAttrit, aes(x=NumCompaniesWorked, y=TotalWorkingYears), xlab="Number of COmpanies Worked", ylab="Total Working Years") + ggtitle("Number of Companies Worked vs Total Working Years") + xlab("Number of Companies Worked") + ylab("Total Working Companies") + geom_point() + geom_smooth(method=loess) + theme_economist()
+
+
+```
+## analysis results:
+#### Overall the most correlated fields are : Department, Education, NumCompaniesWorked, StockOptionLevel, TotalWorkingYears, YearsAtCompany (strongly correlated with TotalWorkingYears), YearsInCurrentRole (strongly correlated with TotalWorkingYears), YearsSinceLastPromotion(strongly correlated with TotalWorkingYears), YearsWithCurrentManager( stringly correlated with TotalWorkingYears), Age ( strongly correlated with all the Year field as well. It could be that age is a better choice vs TotalWorkingYears)
+#### Other considerations : Gender, Marital Status, PercentageSalaryHike (non-linear), PerformanceRating, RelationshipSatisfaction(low), WorkLifeBalance(1 is different)
+#### not sure what mothlyrate field indicates. It has a non-linear relationship with MonthlyIncome, and it does not appear overly strong
+# it's intereting the NumCompaniesWorked does not correlate more with TotalWorkingYears. It does for employees with < 2.5 companies. But after that it's pretty flat!
+
+# linear model 
+#### minimum goal is to get RMSE <  3000 on both the training and the validation set
+
+
+#### After much trial and error with combinations
+
+```{r}
+
+# Function that returns Root Mean Squared Error
+rmse <- function(error)
+{
+    sqrt(mean(error^2))
+}
+
+## since this model does NOT use the attrition field, let's include the data for the employees where we are trying to determine attrition too
+trainAndAttrit =rbind.fill(train, predictAttr) 
+
+
+# linear model (after trying many combinations and ruling out variables that failed to improve RMSE and/or had high P values)
+linearMod <- lm(trainAndAttrit$MonthlyIncome~Age + JobRole + Department + PerformanceRating + WorkLifeBalance + YearsAtCompany, data=trainAndAttrit)
+# 
+summary(linearMod)
+# now use it to predict the salary
+
+
+predictMonthlyIncomeResults = predict(linearMod, trainAndAttrit, inverval="predict")
+
+error <- trainAndAttrit$MonthlyIncome - predictMonthlyIncomeResults
+rmse = rmse(error)
+rmse
+
+```
+
+# Use the model to predict with our validation data.
+# Then take the output of the prior linear regression based approach to predicting the monthlyIncome and write out to seperate files, one file by ID and another file by employee number
+
+```{r}
+
+#predictMonthIncome
+
+predictMonthlyIncomeResultsValidation = predict(linearMod, predictMonthIncome, inverval="predict")
+
+# create a separate dataset with attrition filled in to avoid future confusion
+predictMonthlyIncomeFilledIn = predictMonthIncome
+# use the predicted values
+
+
+predictMonthlyIncomeFilledIn$MonthlyIncome = predictMonthlyIncomeResultsValidation
+predictMonthlyIncomeWithID = predictMonthlyIncomeFilledIn[, c("ID", "MonthlyIncome")]
+write.csv(predictMonthlyIncomeWithID, file="Case2PredictionsPaugh Salary.csv")
+predictMonthlyIncomeWithEmployeeNumber = predictMonthlyIncomeFilledIn[, c("EmployeeNumber", "MonthlyIncome")]
+write.csv(predictMonthlyIncomeWithEmployeeNumber, file="Case2PredictionsByENMonthlyIncome.csv")
+
+```
+
+# this shows using the linear model with a separate train and test dataset and gives an idea of the resulting confusion matrix results
+
+```{r}
+
+# Function that returns Root Mean Squared Error
+rmse <- function(error)
+{
+    sqrt(mean(error^2))
+}
+
+## since this model does NOT use the attrition field, let's include the data for the employees where we are trying to determine attrition too
+
+
+
+set.seed(1)
+splitPerc = .7
+iterations = 500
+masterRMSE = matrix(nrow = iterations, 1)
+
+  
+for(j in 1:iterations)
+{
+  trainIndices = sample(1:dim(trainAndAttrit)[1],round(splitPerc * nrow(trainAndAttrit)))
+  trainData = trainAndAttrit[trainIndices,]
+  testData = trainAndAttrit[-trainIndices,]
+
+
+  # linear model (after trying many combinations and ruling out variables that failed to improve RMSE and/or had high P values)
+  linearMod <- lm(trainData$MonthlyIncome~Age + JobRole + Department + PerformanceRating + WorkLifeBalance + YearsAtCompany, data=trainData)
+  # 
+  summary(linearMod)
+  # now use it to predict the salary
+  
+  
+  predictMonthlyIncomeResults = predict(linearMod, testData, inverval="predict")
+  
+  error <- testData$MonthlyIncome - predictMonthlyIncomeResults
+  masterRMSE[j,1] = rmse(error)
+}
+
+meanRMSE = colMeans(masterRMSE)
+meanRMSE
+
+```
+
+
+
+# let's try using MASS to automatically find a model for us
+#### This produces very similar results to manually searching for a model. And gets almost the exact same RMSE as the manually 
+#### created model above.
+
+```{r}
+
+# Function that returns Root Mean Squared Error
+rmse <- function(error)
+{
+    sqrt(mean(error^2))
+}
+
+# remove attrition - tried it initially WITH attrition and the train dataset and it does not use attrition, so removing it here is reasonable
+includeForAuto = c(2,4,5,6,7,8,9,12, 13,14,15,16,17,18,19,20,21,22,24,25,26,27,28,29.30,31,32,33,34,35,36)
+
+suppressMessages(library(MASS))
+# Fit the full model 
+full.model <- lm(MonthlyIncome ~., data = trainAndAttrit[,includeForAuto])
+# Stepwise regression model
+step.model <- stepAIC(full.model, direction = "both", trace = FALSE)
+summary(step.model)
+
+predictMonthlyIncomeResultsAIC = predict(linearMod, trainAndAttrit, inverval="predict")
+
+error <- trainAndAttrit$MonthlyIncome - predictMonthlyIncomeResultsAIC
+rmse = rmse(error)
+rmse
+
+
+```
+
+# let's try a random forest for predicting attrition
+#### This generates an RMSE 
+
+```{r}
+library(randomForest)
+suppressMessages(library(e1071))
+suppressMessages(library(caret))
+
+
+rmse <- function(error)
+{
+    sqrt(mean(error^2))
+}
+
+set.seed(71)
+includeForRF = c(2,3,4,5,6,7,8,9,12, 13,14,15,16,17,18,19,20,21,22,24,25,26,27,28,29.30,31,32,33,34,35,36)
+
+rfModel <- randomForest(Attrition ~ ., data=train[,includeForRF], ntree=500, importance=TRUE,
+                        proximity=TRUE)
+
+summary(rfModel)
+predictAttritionRF = predict(rfModel, train)
+
+
+CM = confusionMatrix(table(predictAttritionRF,train$Attrition))
+CM
+
+
+```
+# Show Random Forest Confusion Matrix
+
+```{r}
+
+# write out the naive bayes results
+
+
+
+draw_confusion_matrix <- function(cmtrx) {
+
+total <- sum(cmtrx$table)
+
+res <- as.numeric(cmtrx$table)
+
+# Generate color gradients. Palettes come from RColorBrewer.
+
+greenPalette <- c("#F7FCF5","#E5F5E0","#C7E9C0","#A1D99B","#74C476","#41AB5D","#238B45","#006D2C","#00441B")
+
+redPalette <- c("#FFF5F0","#FEE0D2","#FCBBA1","#FC9272","#FB6A4A","#EF3B2C","#CB181D","#A50F15","#67000D")
+
+getColor <- function (greenOrRed = "green", amount = 0) {
+
+if (amount == 0)
+
+return("#FFFFFF")
+
+palette <- greenPalette
+
+if (greenOrRed == "red")
+
+palette <- redPalette
+
+colorRampPalette(palette)(100)[10 + ceiling(90 * amount / total)]
+
+}
+
+# set the basic layout
+
+layout(matrix(c(1,1,2)))
+
+par(mar=c(2,2,2,2))
+
+plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+
+title('CONFUSION MATRIX - Training Data', cex.main=2)
+
+# create the matrix
+
+classes = colnames(cmtrx$table)
+
+rect(150, 430, 240, 370, col=getColor("green", res[1]))
+
+text(195, 435, classes[1], cex=1.2)
+
+rect(250, 430, 340, 370, col=getColor("red", res[3]))
+
+text(295, 435, classes[2], cex=1.2)
+
+text(125, 370, 'Predicted', cex=1.3, srt=90, font=2)
+
+text(245, 450, 'Actual', cex=1.3, font=2)
+
+rect(150, 305, 240, 365, col=getColor("red", res[2]))
+
+rect(250, 305, 340, 365, col=getColor("green", res[4]))
+
+text(140, 400, classes[1], cex=1.2, srt=90)
+
+text(140, 335, classes[2], cex=1.2, srt=90)
+
+# add in the cmtrx results
+
+text(195, 400, res[1], cex=1.6, font=2, col='white')
+
+text(195, 335, res[2], cex=1.6, font=2, col='white')
+
+text(295, 400, res[3], cex=1.6, font=2, col='white')
+
+text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+# add in the specifics
+
+plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS", xaxt='n', yaxt='n')
+
+text(10, 85, names(cmtrx$byClass[1]), cex=1.2, font=2)
+
+text(10, 70, round(as.numeric(cmtrx$byClass[1]), 3), cex=1.2)
+
+text(30, 85, names(cmtrx$byClass[2]), cex=1.2, font=2)
+
+text(30, 70, round(as.numeric(cmtrx$byClass[2]), 3), cex=1.2)
+
+text(50, 85, names(cmtrx$byClass[5]), cex=1.2, font=2)
+
+text(50, 70, round(as.numeric(cmtrx$byClass[5]), 3), cex=1.2)
+
+text(70, 85, names(cmtrx$byClass[6]), cex=1.2, font=2)
+
+text(70, 70, round(as.numeric(cmtrx$byClass[6]), 3), cex=1.2)
+
+text(90, 85, names(cmtrx$byClass[7]), cex=1.2, font=2)
+
+text(90, 70, round(as.numeric(cmtrx$byClass[7]), 3), cex=1.2)
+
+# add in the accuracy information
+
+text(30, 35, names(cmtrx$overall[1]), cex=1.5, font=2)
+
+text(30, 20, round(as.numeric(cmtrx$overall[1]), 3), cex=1.4)
+
+text(70, 35, names(cmtrx$overall[2]), cex=1.5, font=2)
+
+text(70, 20, round(as.numeric(cmtrx$overall[2]), 3), cex=1.4)
+
+}
+
+
+
+draw_confusion_matrix(CM)
+```
+
+
+# Use the RF model to predict with our validation data.
+# Then take the output of the prior RF based approach to predicting the monthlyIncome and write out to seperate files, one file by ID and another file by employee number
+
+```{r}
+
+
+predictAttritionResultsValidation = predict(rfModel, newdata =  predictAttr)
+
+# create a separate dataset with attrition filled in to avoid future confusion
+predictAttrFilledIn = predictAttr
+# use the predicted values
+
+predictAttrFilledIn
+
+predictAttrFilledIn$Attrition = predictAttritionResultsValidation
+predictAttrWithID = predictAttrFilledIn[, c("ID", "Attrition")]
+write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv")
+predictAttrWithEmployeeNumber = predictAttrFilledIn[, c("EmployeeNumber", "Attrition")]
+write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv")
+
+```
+
+
+
+
+#let's try using randem forest for attrition, but this time let's try varying the # of trees to see what effect this has.
+## The results show that the # of trees really doesn't change things
+
+
+```{r}
+
+set.seed(1)
+splitPerc = .7
+iterations = 50
+masterAcc = matrix(nrow = iterations, ncol = 1)
+masterSpec = matrix(nrow = iterations, ncol = 1)
+masterSens = matrix(nrow = iterations, ncol = 1)
+
+  
+for(j in 1:iterations)
+{
+trainIndices = sample(1:dim(train)[1],round(splitPerc * nrow(train)))
+trainData = train[trainIndices,]
+testData = train[-trainIndices,]
+  #classifications = knn(scale(trainData[,c(3,4)]),scale(testData[,c(3,4)]),as.factor(trainData$Attrition), prob = TRUE, k = i)
+  rfModelTest = randomForest(Attrition ~ ., data=trainData[,includeForRF], ntree=500, importance=TRUE,
+                        proximity=TRUE)
+  
+  predictAttritionRF = predict(rfModelTest, newdata=testData)
+
+  CM = confusionMatrix(table(predictAttritionRF, as.factor(testData$Attrition)))
+  masterAcc[j,1] = CM$overall[1]
+  masterSens[j,1] = CM$byClass[1][[1]] # sensitivity
+  masterSpec[j,1] = CM$byClass[2][[1]] # specificity
+  CM
+}
+
+MeanAcc = colMeans(masterAcc)
+MeanAcc
+
+
+MeanSens = colMeans(masterSens)
+MeanSens
+
+MeanSpec = colMeans(masterSpec)
+MeanSpec
+
+CM
+
+```
+
+# the specificity is very low still on the Random Forest and Naive Bayes results. Can we improve this using Logistic regression?
+## based on the ROC curve, a threshold of 0.15 or so gives very good sensitivity and specificity
+
+```{r}
+
+suppressMessages(library(ROCR))
+
+# use the value with the monthly income filled in! Use our calculated values - they may be useful for predicting attrition
+trainAndMonthly = rbind(train, predictMonthlyIncomeFilledIn)
+
+includeForLogReg = c(2,3,4,5,6,7,8,9,12,13,14,15,16,17,18,19,20,21,22,24,25,26,27,28,29.30,31,32,33,34,35,36,37,38,39)
+
+logRegModel <- glm(Attrition ~ ., data=trainAndMonthly[includeForLogReg], family = "binomial") %>%
+  stepAIC(trace = FALSE)
+summary(logRegModel)
+
+predictAttrLogisticRegresionProbs = predict(logRegModel, trainAndMonthly, inverval="predict", type = "response")
+
+predictAttrLogisticRegresion <- ifelse(predictAttrLogisticRegresionProbs > 0.2, "Yes", "No")
+
+
+predictAttrLogisticRegresion <- as.factor(predictAttrLogisticRegresion)
+length(predictAttrLogisticRegresion)
+
+
+CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition))
+CM
+
+# let's lot the ROC curve
+
+ROCRPred <- prediction(predictAttrLogisticRegresionProbs, trainAndMonthly$Attrition)
+ROCRPerf <- performance(ROCRPred,"tpr","fpr")
+plot(ROCRPerf,colorize = TRUE, print.cutoffs.at = seq(0.1, by = 0.1))
+
+
+```
+
+# using a very low threshold here to make sure the specificity is higher than our 0.6 goal, even if it results in lower accuracy.
+
+```{r}
+
+
+predictAttritionResultsValidationProbs = predict(logRegModel, predictAttr, inverval="predict", type = "response")
+
+predictAttritionResultsValidation <- ifelse(predictAttritionResultsValidationProbs > 0.12, "Yes", "No")
+
+# create a separate dataset with attrition filled in to avoid future confusion
+predictAttrFilledIn = predictAttr
+# use the predicted values
+
+
+predictAttrFilledIn$Attrition = predictAttritionResultsValidation
+predictAttrWithID = predictAttrFilledIn[, c("ID", "Attrition")]
+write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv")
+predictAttrWithEmployeeNumber = predictAttrFilledIn[, c("EmployeeNumber", "Attrition")]
+write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv")
+
+
+```
+
+
+
+# Show AIC Linear regression Confision Matrix
+
+```{r}
+
+# write out the naive bayes results
+
+
+
+draw_confusion_matrix <- function(cmtrx) {
+
+total <- sum(cmtrx$table)
+
+res <- as.numeric(cmtrx$table)
+
+# Generate color gradients. Palettes come from RColorBrewer.
+
+greenPalette <- c("#F7FCF5","#E5F5E0","#C7E9C0","#A1D99B","#74C476","#41AB5D","#238B45","#006D2C","#00441B")
+
+redPalette <- c("#FFF5F0","#FEE0D2","#FCBBA1","#FC9272","#FB6A4A","#EF3B2C","#CB181D","#A50F15","#67000D")
+
+getColor <- function (greenOrRed = "green", amount = 0) {
+
+if (amount == 0)
+
+return("#FFFFFF")
+
+palette <- greenPalette
+
+if (greenOrRed == "red")
+
+palette <- redPalette
+
+colorRampPalette(palette)(100)[10 + ceiling(90 * amount / total)]
+
+}
+
+# set the basic layout
+
+layout(matrix(c(1,1,2)))
+
+par(mar=c(2,2,2,2))
+
+plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+
+title('CONFUSION MATRIX - Training Data', cex.main=2)
+
+# create the matrix
+
+classes = colnames(cmtrx$table)
+
+rect(150, 430, 240, 370, col=getColor("green", res[1]))
+
+text(195, 435, classes[1], cex=1.2)
+
+rect(250, 430, 340, 370, col=getColor("red", res[3]))
+
+text(295, 435, classes[2], cex=1.2)
+
+text(125, 370, 'Predicted', cex=1.3, srt=90, font=2)
+
+text(245, 450, 'Actual', cex=1.3, font=2)
+
+rect(150, 305, 240, 365, col=getColor("red", res[2]))
+
+rect(250, 305, 340, 365, col=getColor("green", res[4]))
+
+text(140, 400, classes[1], cex=1.2, srt=90)
+
+text(140, 335, classes[2], cex=1.2, srt=90)
+
+# add in the cmtrx results
+
+text(195, 400, res[1], cex=1.6, font=2, col='white')
+
+text(195, 335, res[2], cex=1.6, font=2, col='white')
+
+text(295, 400, res[3], cex=1.6, font=2, col='white')
+
+text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+# add in the specifics
+
+plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS", xaxt='n', yaxt='n')
+
+text(10, 85, names(cmtrx$byClass[1]), cex=1.2, font=2)
+
+text(10, 70, round(as.numeric(cmtrx$byClass[1]), 3), cex=1.2)
+
+text(30, 85, names(cmtrx$byClass[2]), cex=1.2, font=2)
+
+text(30, 70, round(as.numeric(cmtrx$byClass[2]), 3), cex=1.2)
+
+text(50, 85, names(cmtrx$byClass[5]), cex=1.2, font=2)
+
+text(50, 70, round(as.numeric(cmtrx$byClass[5]), 3), cex=1.2)
+
+text(70, 85, names(cmtrx$byClass[6]), cex=1.2, font=2)
+
+text(70, 70, round(as.numeric(cmtrx$byClass[6]), 3), cex=1.2)
+
+text(90, 85, names(cmtrx$byClass[7]), cex=1.2, font=2)
+
+text(90, 70, round(as.numeric(cmtrx$byClass[7]), 3), cex=1.2)
+
+# add in the accuracy information
+
+text(30, 35, names(cmtrx$overall[1]), cex=1.5, font=2)
+
+text(30, 20, round(as.numeric(cmtrx$overall[1]), 3), cex=1.4)
+
+text(70, 35, names(cmtrx$overall[2]), cex=1.5, font=2)
+
+text(70, 20, round(as.numeric(cmtrx$overall[2]), 3), cex=1.4)
+
+}
+
+
+
+draw_confusion_matrix(CM)
+```
+
+
+# let's try that last model against our validation data, with prob > 0.20
+```{r}
+
+predictAttrLogisticRegresion <- ifelse(predictAttrLogisticRegresionProbs > 0.15, "Yes", "No")
+
+head(train$Attrition)
+predictAttrLogisticRegresion <- as.factor(predictAttrLogisticRegresion)
+length(predictAttrLogisticRegresion)
+
+str(predictAttrLogisticRegresion)
+str(train$Attrition)
+head(predictAttrLogisticRegresion)
+
+CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition))
+CM
+
+
+```
+
+# try the GLM model with train/test split to gauge the confusion matrix results
+# this is terribly slow and it gets a different model each time... so very difficult to gauge effectiveness this way
+## This is way too slow, and the model is different every time, so what's the point? 
+## We want to train and test with a consistent model across all our cross-validation steps
+
+```{r}
+
+set.seed(1)
+splitPerc = .7
+iterations = 2
+masterAcc = matrix(nrow = iterations, 1)
+masterSpec = matrix(nrow = iterations, 1)
+masterSens = matrix(nrow = iterations, 1)
+
+for(j in 1:iterations)
+{
+trainIndices = sample(1:dim(trainAndMonthly)[1],round(splitPerc * nrow(trainAndMonthly)))
+trainData = trainAndMonthly[trainIndices,]
+testData = trainAndMonthly[-trainIndices,]
+
+
+logRegModel <- glm(Attrition ~ ., data=trainAndMonthly[includeForLogReg], family = "binomial") %>%
+  stepAIC(trace = FALSE)
+
+  predictAttrLogisticRegresionProbs = predict(logRegModel, trainAndMonthly, inverval="predict", type = "response")
+  
+  predictAttrLogisticRegresion <- ifelse(predictAttrLogisticRegresionProbs > 0.2, "Yes", "No")
+  
+  
+  predictAttrLogisticRegresion <- as.factor(predictAttrLogisticRegresion)
+  length(predictAttrLogisticRegresion)
+  
+  
+  CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition))
+  CM
+  
+  
+  
+  masterAcc[j,1] = CM$overall[1]
+  masterSens[j,1] = CM$byClass[1][[1]] # sensitivity
+  masterSpec[j,1] = CM$byClass[2][[1]] # specificity
+}
+
+masterAcc
+
+MeanAcc = colMeans(masterAcc)
+MeanAcc
+
+
+
+
+```
+
+
+# using a manual model with the most promising fields
+## create the model with the training data
+
+```{r}
+suppressMessages(library(ROCR))
+
+# use the value with the monthly income filled in! Use our calculated values - they may be useful for predicting attrition
+trainAndMonthly = rbind(train, predictMonthlyIncomeFilledIn)
+
+includeForLogReg = c(2,3,4,5,6,7,8,9,12,13,14,15,16,17,18,19,20,21,22,24,25,26,27,28,29.30,31,32,33,34,35,36,37,38,39)
+
+logRegModel <- glm(Attrition ~ Age + BusinessTravel + DailyRate +  DistanceFromHome +  Education + EnvironmentSatisfaction + HourlyRate + JobLevel  + JobRole  + NumCompaniesWorked + OverTime + StockOptionLevel + WorkLifeBalance + YearsAtCompany  + YearsSinceLastPromotion, data=trainAndMonthly[includeForLogReg], family = "binomial") 
+summary(logRegModel)
+
+predictAttrLogisticRegresionProbs = predict(logRegModel, trainAndMonthly, inverval="predict", type = "response")
+
+predictAttrLogisticRegresion <- ifelse(predictAttrLogisticRegresionProbs > 0.15, "Yes", "No")
+
+
+predictAttrLogisticRegresion <- as.factor(predictAttrLogisticRegresion)
+length(predictAttrLogisticRegresion)
+
+
+CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition))
+CM
+
+# let's lot the ROC curve
+
+ROCRPred <- prediction(predictAttrLogisticRegresionProbs, trainAndMonthly$Attrition)
+ROCRPerf <- performance(ROCRPred,"tpr","fpr")
+plot(ROCRPerf,colorize = TRUE, print.cutoffs.at = seq(0.1, by = 0.1))
+
+```
+
+# using a very low threshold here to make sure the specificity is higher than our 0.6 goal, even if it results in lower accuracy.
+
+```{r}
+
+
+predictAttritionResultsValidationProbs = predict(logRegModel, predictAttr, inverval="predict", type = "response")
+
+predictAttritionResultsValidation <- ifelse(predictAttritionResultsValidationProbs > 0.12, "Yes", "No")
+
+# create a separate dataset with attrition filled in to avoid future confusion
+predictAttrFilledIn = predictAttr
+# use the predicted values
+
+
+predictAttrFilledIn$Attrition = predictAttritionResultsValidation
+predictAttrWithID = predictAttrFilledIn[, c("ID", "Attrition")]
+write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv")
+predictAttrWithEmployeeNumber = predictAttrFilledIn[, c("EmployeeNumber", "Attrition")]
+write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv")
+
+
+```
+
+
+# using a manual model with the most promosing fields
+## This creates essentially a manual ROC curve of the cross validation data, by calculating the specificity and sensitivity at each point
+
+```{r}
+
+set.seed(1)
+splitPerc = .7
+iterations = 50
+thresholdValues = seq(0,1,0.01)
+thresholdIterations = length(thresholdValues)
+masterAcc = matrix(nrow = iterations, ncol=thresholdIterations)
+masterSpec = matrix(nrow = iterations, ncol=thresholdIterations)
+masterSens = matrix(nrow = iterations, ncol=thresholdIterations)
+masterCombined = matrix(nrow = iterations, ncol=thresholdIterations)
+
+
+for(j in 1:iterations)
+{
+  
+  trainIndices = sample(1:dim(trainAndMonthly)[1],round(splitPerc * nrow(trainAndMonthly)))
+  trainData = trainAndMonthly[trainIndices,]
+  testData = trainAndMonthly[-trainIndices,]
+  
+  logRegModel <- glm(Attrition ~ Age + BusinessTravel + DailyRate +  DistanceFromHome +  Education + EnvironmentSatisfaction + HourlyRate + JobLevel  + JobRole  + NumCompaniesWorked + OverTime + StockOptionLevel + WorkLifeBalance + YearsAtCompany  + YearsSinceLastPromotion, data=trainData, family = "binomial")
+
+  predictAttrLogisticRegresionProbs = predict(logRegModel, testData, inverval="predict", type = "response")
+  
+  for (i in 1:length(thresholdValues))
+  {
+  
+    predictAttrLogisticRegresion <- ifelse(predictAttrLogisticRegresionProbs > thresholdValues[i], "Yes", "No")
+  
+    predictAttrLogisticRegresion <- as.factor(predictAttrLogisticRegresion)
+  
+    levels(predictAttrLogisticRegresion) = levels(testData$Attrition)
+    CM = confusionMatrix(table(predictAttrLogisticRegresion, as.factor(testData$Attrition)))
+    masterAcc[j,i] = CM$overall[1]
+    masterSens[j,i] = CM$byClass[1][[1]] # sensitivity
+    masterSpec[j,i] = CM$byClass[2][[1]] # specificity
+    masterCombined[j,i] =  CM$byClass[1][[1]] + CM$byClass[2][[1]] # combined
+  }
+}
+# all the rows in the same column have the same threshold value, so average across the column to get the average for threshold
+MeanAcc = colMeans(masterAcc)
+
+plot(seq(1,thresholdIterations,1),MeanAcc, type = "l", main="Accuracy by Threshold",xlab = "Threshold", ylab="Accuracy")
+which.max(MeanAcc)
+max(MeanAcc)
+
+MeanSens = colMeans(masterSens)
+
+plot(seq(1,thresholdIterations,1),MeanSens, type = "l", main="Sensitivity by Threshold", xlab = "Threshold", ylab="Sensitivity")
+which.max(MeanSens)
+thresholdValues[which.max(MeanSens)]
+max(MeanSens)
+
+MeanSpec = colMeans(masterSpec)
+
+plot(seq(1,thresholdIterations,1),MeanSpec, type = "l", main="Specificity by Threshold",xlab = "Threshold", ylab="Specificity")
+which.max(MeanSpec)
+thresholdValues[which.max(MeanSpec)]
+max(MeanSpec)
+
+
+MeanCombined = colMeans(masterCombined)
+plot(seq(1,thresholdIterations,1),MeanCombined, type = "l", main="Sensitivity + Specificity by Threshold", xlab = "Threshold", ylab="Sensitivity + Specificity")
+which.max(MeanCombined)
+thresholdValues[which.max(MeanCombined)]
+max(MeanCombined)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+# lets try logistic regression but with a manually created model
+## this uses the new variables that focus on the factors that led to attrtion in our training data
+
+```{r}
+
+#str(trainAndMonthly)
+
+includeForLogReg = c(2,3,4,5,6,7,8,9,12, 13,14,15,16,17,18,19,21,22,24,25,26,27,28,29.30,31,32,33,34,35,36)
+
+#logRegModel <- glm(Attrition ~ BusinessTravelFrequently + LowEducation + LowEnvironmentalSatisfaction + LowJobLevel + JobRoleSales + HighCompaniesWorked + LowWorkLifeBalance + JobRoleMed + Age + YearsInCurrentRole + DistanceFromHome + OverTime + DailyRate, data=trainAndMonthly, family = "binomial") %>%
+#  stepAIC(trace = FALSE)
+
+logRegModel <- glm(Attrition ~ BusinessTravelFrequently + LowEducation + LowEnvironmentalSatisfaction + LowJobLevel + JobRoleSales + HighCompaniesWorked + LowWorkLifeBalance + JobRoleMed + Age + DistanceFromHome + OverTime, data=trainAndMonthly, family = "binomial") 
+
+summary(logRegModel)
+
+predictAttrLogisticRegresionProbs = predict(logRegModel, trainAndMonthly, inverval="predict", type = "response")
+
+predictAttrLogisticRegresion <- ifelse(predictAttrLogisticRegresionProbs > 0.2, "Yes", "No")
+
+
+head(train$Attrition)
+
+predictAttrLogisticRegresion <- as.factor(predictAttrLogisticRegresion)
+length(predictAttrLogisticRegresion)
+
+str(predictAttrLogisticRegresion)
+str(train$Attrition)
+head(predictAttrLogisticRegresion)
+
+CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition))
+CM
+
+# let's lot the ROC curve
+
+ROCRPred <- prediction(predictAttrLogisticRegresionProbs, trainAndMonthly$Attrition)
+ROCRPerf <- performance(ROCRPred,"tpr","fpr")
+plot(ROCRPerf,colorize = TRUE, print.cutoffs.at = seq(0.1, by = 0.1))
+
+
+```
+
+
+# write out to file for the alternative model
+
+```{r}
+
+
+predictAttritionResultsValidationProbs = predict(logRegModel, predictAttr, inverval="predict", type = "response")
+
+predictAttritionResultsValidation <- ifelse(predictAttritionResultsValidationProbs > 0.12, "Yes", "No")
+
+# create a separate dataset with attrition filled in to avoid future confusion
+predictAttrFilledIn = predictAttr
+# use the predicted values
+
+
+predictAttrFilledIn$Attrition = predictAttritionResultsValidation
+predictAttrWithID = predictAttrFilledIn[, c("ID", "Attrition")]
+write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv")
+predictAttrWithEmployeeNumber = predictAttrFilledIn[, c("EmployeeNumber", "Attrition")]
+write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv")
+
+
+```
+
+
+
+# repeat manual model, but not with many iteration of train/test testing to check confusion matrix results
+
+```{r}
+
+set.seed(1)
+splitPerc = .7
+iterations = 50
+thresholdValues = seq(0,1,0.01)
+thresholdIterations = length(thresholdValues)
+masterAcc = matrix(nrow = iterations, ncol=thresholdIterations)
+masterSpec = matrix(nrow = iterations, ncol=thresholdIterations)
+masterSens = matrix(nrow = iterations, ncol=thresholdIterations)
+masterCombined = matrix(nrow = iterations, ncol=thresholdIterations)
+
+
+for(j in 1:iterations)
+{
+  
+  trainIndices = sample(1:dim(trainAndMonthly)[1],round(splitPerc * nrow(trainAndMonthly)))
+  trainData = trainAndMonthly[trainIndices,]
+  testData = trainAndMonthly[-trainIndices,]
+  
+  #logRegModel <- glm(Attrition ~ BusinessTravelFrequently + LowEducation + LowEnvironmentalSatisfaction + LowJobLevel + JobRoleSales + HighCompaniesWorked + LowWorkLifeBalance + JobRoleMed + Age + YearsInCurrentRole + DistanceFromHome + OverTime + DailyRate, data=trainAndMonthly, family = "binomial") %>%
+  #  stepAIC(trace = FALSE)
+  
+  logRegModel <- glm(Attrition ~ BusinessTravelFrequently + LowEducation + LowEnvironmentalSatisfaction + LowJobLevel + JobRoleSales + HighCompaniesWorked + LowWorkLifeBalance + JobRoleMed + Age + DistanceFromHome + OverTime, data=trainData, family = "binomial") 
+  
+
+  predictAttrLogisticRegresionProbs = predict(logRegModel, testData, inverval="predict", type = "response")
+  
+  for (i in 1:length(thresholdValues))
+  {
+  
+    predictAttrLogisticRegresion <- ifelse(predictAttrLogisticRegresionProbs > thresholdValues[i], "Yes", "No")
+  
+    predictAttrLogisticRegresion <- as.factor(predictAttrLogisticRegresion)
+  
+    levels(predictAttrLogisticRegresion) = levels(testData$Attrition)
+    CM = confusionMatrix(table(predictAttrLogisticRegresion, as.factor(testData$Attrition)))
+    masterAcc[j,i] = CM$overall[1]
+    masterSens[j,i] = CM$byClass[1][[1]] # sensitivity
+    masterSpec[j,i] = CM$byClass[2][[1]] # specificity
+    masterCombined[j,i] =  CM$byClass[1][[1]] + CM$byClass[2][[1]] # combined
+  }
+}
+# all the rows in the same column have the same threshold value, so average across the column to get the average for threshold
+MeanAcc = colMeans(masterAcc)
+
+plot(seq(1,thresholdIterations,1),MeanAcc, type = "l", xlab = "Threshold", ylab="Accuracy")
+which.max(MeanAcc)
+max(MeanAcc)
+
+MeanSens = colMeans(masterSens)
+
+plot(seq(1,thresholdIterations,1),MeanSens, type = "l", xlab = "Threshold", ylab="Sensitivity")
+which.max(MeanSens)
+thresholdValues[which.max(MeanSens)]
+max(MeanSens)
+
+MeanSpec = colMeans(masterSpec)
+
+plot(seq(1,thresholdIterations,1),MeanSpec, type = "l", xlab = "Threshold", ylab="Specificity")
+which.max(MeanSpec)
+thresholdValues[which.max(MeanSpec)]
+max(MeanSpec)
+
+
+MeanCombined = colMeans(masterCombined)
+plot(seq(1,thresholdIterations,1),MeanCombined, type = "l", xlab = "Threshold", ylab="Sensitivity + Specificity")
+which.max(MeanCombined)
+thresholdValues[which.max(MeanCombined)]
+max(MeanCombined)
+
+
+```
+
+
+# But wait! We are just beginning to data science!
+# Let's try XGBoost! 
+### first setup
+
+```{r}
+install.packages("drat", repos="https://cran.rstudio.com")
+drat:::addRepo("dmlc")
+install.packages("xgboost")
+```
+
+
+```{r}
+
+library(drat)
+library(xgboost)
+library(data.table)
+
+numericFields = c(2,7,14,25)
+
+trainAndMonthly[,3]
+
+trainAndMonthlyForBoost.data = as.matrix(trainAndMonthly[,c(2,7,14,25)])
+trainAndMonthlyForBoost.label <- trainAndMonthly[-3] %>% mutate(AttritionNumeric = case_when(
+        Attrition  == "Yes"  ~ 1,
+        Attrition == "No"  ~ 0)) %>% pull(AttritionNumeric)
+
+
+trainXgb.index = sample(n,floor(0.75*n))
+trainXgb.data = as.matrix(trainAndMonthlyForBoost.data[trainXgb.index,])
+trainXgb.label = trainAndMonthlyForBoost.label[trainXgb.index]
+testXgb.data = as.matrix(trainAndMonthlyForBoost.data[-trainXgb.index,])
+testXgb.label = trainAndMonthlyForBoost.label[-trainXgb.index]
+
+str(trainXgb.data)
+str(testXgb.data)
+
+xgb.train = xgb.DMatrix(data=trainXgb.data, label=trainXgb.index)
+xgb.test = xgb.DMatrix(data=testXgb.data,label=testXgb.label)
+
+num_class = 2
+params = list(
+  booster="gbtree",
+  eta=0.001,
+  max_depth=5,
+  gamma=3,
+  subsample=0.75,
+  colsample_bytree=1,
+  objective="multi:softprob",
+  eval_metric="mlogloss",
+  num_class=num_class
+)
+
+
+xgb.fit=xgb.train(
+  params=params,
+  data=xgb.train,
+  nrounds=10000,
+  nthreads=1,
+  early_stopping_rounds=10,
+  watchlist=list(val1=xgb.train,val2=xgb.test),
+  verbose=0
+)
+
+
+
+```
+
