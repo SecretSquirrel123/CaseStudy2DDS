@@ -1687,30 +1687,6 @@ plot(ROCRPerf,colorize = TRUE, print.cutoffs.at = seq(0.1, by = 0.1))
 ```
 
 
-# write out to file for the alternative model
-
-```{r}
-
-
-predictAttritionResultsValidationProbs = predict(logRegModel, predictAttr, inverval="predict", type = "response")
-
-predictAttritionResultsValidation <- ifelse(predictAttritionResultsValidationProbs > 0.12, "Yes", "No")
-
-# create a separate dataset with attrition filled in to avoid future confusion
-predictAttrFilledIn = predictAttr
-# use the predicted values
-
-
-predictAttrFilledIn$Attrition = predictAttritionResultsValidation
-predictAttrWithID = predictAttrFilledIn[, c("ID", "Attrition")]
-write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv", row.names=FALSE)
-predictAttrWithEmployeeNumber = predictAttrFilledIn[, c("EmployeeNumber", "Attrition")]
-write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv", row.names=FALSE)
-
-
-```
-
-
 
 # repeat manual model, but not with many iteration of train/test testing to check confusion matrix results
 
@@ -1806,6 +1782,7 @@ dfMeltThresholdData <- melt(dfTestingResults, id.vars="Threshold", value.name="v
 ggplot(dfMeltThresholdData, aes(x=Threshold, y=value, color=variable)) + 
   geom_point()
 
+str(train)
 
 
 ```
