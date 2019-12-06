@@ -15,6 +15,8 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Original dataset https://www.kaggle.com/pavansubhasht/ibm-hr-analytics-attrition-dataset
 #### Goal - using the subset of data provided for training, predict the salaries (MonthlyIncome) and Attribution (Attrition = Yes/No) for the two separate validation datasets.
 #### Must use either KNN or Naive Bayes, but can use other techniques too
+# Youtube video of presenation is here: 
+## https://secretsquirrel123.github.io/
 
 #### Install packages
 
