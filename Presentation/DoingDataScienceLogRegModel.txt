@@ -1,0 +1,35 @@
+                                  Estimate Std. Error z value Pr(>|z|)    
+(Intercept)                      1.2552671  0.9486894   1.323 0.185782    
+Age                             -0.0441123  0.0130892  -3.370 0.000751 ***
+BusinessTravelTravel_Frequently  1.5161498  0.4310237   3.518 0.000436 ***
+BusinessTravelTravel_Rarely      0.7032475  0.3978659   1.768 0.077136 .  
+DailyRate                       -0.0005161  0.0002456  -2.102 0.035587 *  
+DistanceFromHome                 0.0440787  0.0118485   3.720 0.000199 ***
+EnvironmentSatisfaction2        -1.1946833  0.3109987  -3.841 0.000122 ***
+EnvironmentSatisfaction3        -1.1231583  0.2744110  -4.093 4.26e-05 ***
+EnvironmentSatisfaction4        -1.2057602  0.2729599  -4.417 9.99e-06 ***
+HourlyRate                       0.0071089  0.0048619   1.462 0.143695    
+JobLevel2                       -1.3520656  0.3971628  -3.404 0.000663 ***
+JobLevel3                       -1.6854379  0.3750157  -4.494 6.98e-06 ***
+JobLevel4                       -2.2746771  0.5221527  -4.356 1.32e-05 ***
+JobRoleHuman Resources           1.2625238  0.6136876   2.057 0.039660 *  
+JobRoleLaboratory Technician     1.2358337  0.4812186   2.568 0.010225 *  
+JobRoleManager                   0.2396844  0.6894364   0.348 0.728101    
+JobRoleManufacturing Director    0.0929140  0.5873320   0.158 0.874302    
+JobRoleResearch Director        -1.4759585  0.9287324  -1.589 0.112011    
+JobRoleResearch Scientist        0.5947935  0.4796452   1.240 0.214950    
+JobRoleSales Executive           0.8427604  0.4707331   1.790 0.073403 .  
+JobRoleSales Representative      2.4020655  0.5393920   4.453 8.46e-06 ***
+JobSatisfaction2                -0.3854666  0.2983800  -1.292 0.196404    
+JobSatisfaction3                -0.4208734  0.2624351  -1.604 0.108775    
+JobSatisfaction4                -1.1503510  0.2842737  -4.047 5.20e-05 ***
+NumCompaniesWorked               0.1690484  0.0398307   4.244 2.19e-05 ***
+OverTimeYes                      1.9865547  0.2114434   9.395  < 2e-16 ***
+StockOptionLevel1               -1.1332201  0.2197640  -5.157 2.52e-07 ***
+StockOptionLevel2               -1.8406855  0.4562480  -4.034 5.47e-05 ***
+StockOptionLevel3               -0.4460563  0.4017835  -1.110 0.266917    
+WorkLifeBalance2                -1.0772779  0.3928362  -2.742 0.006101 ** 
+WorkLifeBalance3                -1.3618824  0.3648384  -3.733 0.000189 ***
+WorkLifeBalance4                -1.2042954  0.4599882  -2.618 0.008842 ** 
+YearsAtCompany                  -0.0523385  0.0271194  -1.930 0.053616 .  
+YearsSinceLastPromotion          0.1060962  0.0448531   2.365 0.018010 *  

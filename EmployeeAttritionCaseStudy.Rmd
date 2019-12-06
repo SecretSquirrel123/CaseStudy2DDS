@@ -19,15 +19,19 @@ knitr::opts_chunk$set(echo = TRUE)
 #### Install packages
 
 ```{r}
-install.packages("e1071") #naiveBayes()
-install.packages("caret")
-install.packages("corrplot")
-install.packages("MASS")
-install.packages("Rtools")
-install.packages("randomForest")
-install.packages("fields")
-install.packages("ggthemes")
-install.packages("ROCR")
+require("e1071")
+require("caret")
+require("corrplot")
+require("MASS")
+require("randomForest")
+require("fields")
+require("ggthemes")
+require("ROCR")
+require("dplyr")
+require("ggplot2")
+require("scales")
+require("grid")
+require("reshape")
 ```
 
 
@@ -307,6 +311,32 @@ ggplot(data=train, aes(train$Education, fill=train$Attrition)) +
 
 ```
 
+# lets make a nicer chart of just attrition
+
+```{r}
+library(plotly)
+
+
+
+attritGrouped  <-  trainAndMonthlyIncome %>% group_by(Attrition) %>% tally() %>%
+  mutate(percent=round(prop.table(n),2) * 100) %>% 
+  ggplot(aes(x=Attrition, y=percent)) + geom_bar(stat="identity") + 
+geom_text(aes(x=Attrition, y=0.1, label= sprintf("%.2f%%", percent)),
+            hjust=0.5, vjust=-3, size=4, 
+            colour="white", fontface="bold") + theme_bw() + labs(x="Employee Attrition", y="Percentage", title="Employee Attrition Percentage") +
+  theme_economist() 
+attritGrouped
+
+
+attritGrouped  <-  trainAndMonthlyIncome %>% group_by(Attrition) %>% tally()
+bp<- ggplot(attritGrouped, aes(x="", y=n, fill=Attrition))+
+geom_bar(width = 1, stat = "identity")
+pie <- bp + coord_polar("y", start=0) 
+pie
+
+```
+
+
 
 # try to get a nice percentage facet wrap
 
@@ -428,6 +458,49 @@ NiceBoxPlot("Attrition", "YearsWithCurrManager", "Attrition", "Years with Curren
 
 ```
 
+# let's do further analysis to better understand what could be causing 
+```{r}
+# look at job role + job level
+
+p<-ggplot(data=trainAndMonthlyIncome, aes(x=JobRole,y = "", fill=Attrition)) +
+  geom_bar(stat="identity") + facet_grid(JobLevel ~ .) + xlab("Job Level") + ylab("Job Role") + ggtitle("Attrition by Job level and Job Role")
+p
+# this scales better if saved to a file
+ggsave("AttritionByJobLevelJobRole.jpg", plot = p, width = 12, height = 12, units = "in")
+
+# maybe use dodge to make this smaller?
+p = ggplot(trainAndMonthlyIncome, aes(JobRole, fill = Attrition)) +
+  geom_bar(position = "dodge2") + facet_grid(JobLevel ~ .) + 
+  ggtitle("Attrition by Job Level and Job Role") + xlab("Job Role") + ylab("Count by Job Level") 
+p
+ggsave("AttritionByJobLevelJobRoleDodge.jpg", plot = p, width = 15, height = 8, units = "in") 
+
+
+p = ggplot(trainAndMonthlyIncome, aes(JobRole, fill = Attrition)) +
+  geom_bar(position = "dodge2") + facet_grid(OverTime ~ .) + 
+  ggtitle("Attrition by Overtime and Job Role") + xlab("Job Role") + ylab("Count by Overtime") 
+p
+ggsave("AttritionByOvertimeJobRoleDodge.jpg", plot = p, width = 15, height = 8, units = "in") 
+
+
+p = ggplot(trainAndMonthlyIncome, aes(JobRole, fill = Attrition)) +
+  geom_bar(position = "dodge2") + facet_grid(JobSatisfaction ~ .) + 
+  ggtitle("Attrition by Job Satisfaction and Job Role") + xlab("Job Satisfaction") + ylab("Count by Overtime") 
+p
+ggsave("AttritionByJobSatisfactionJobRoleDodge.jpg", plot = p, width = 15, height = 8, units = "in") 
+
+
+# stock option level by job role
+
+p = ggplot(trainAndMonthlyIncome, aes(JobRole, fill = Attrition)) +
+  geom_bar(position = "dodge2") + facet_grid(StockOptionLevel ~ .) + 
+  ggtitle("Attrition by Stock Option Level and Job Role") + xlab("Job Role") + ylab("Count by Stock Option Level") 
+p
+ggsave("AttritionBystockOptionLevelJobRoleDodge.jpg", plot = p, width = 15, height = 8, units = "in") 
+
+
+```
+
 
 
 
@@ -447,7 +520,7 @@ result = predict(modelBayes,train[goodToPredictAttr])
 
 # result is our predictions, but we have values on the original, let's compare to those
 
-CM = confusionMatrix(table(result,train$Attrition))
+CM = confusionMatrix(table(result,train$Attrition), positive="Yes")
 CM
 
 str(result)
@@ -456,24 +529,9 @@ length(result)
 
 ```
 
-# write out the naive bayes results
+# confusion matrix for naive bayes
 
 ```{r}
-
-predictAttritionResultsValidation = predict(modelBayes, predictAttr)
-
-# create a separate dataset with attrition filled in to avoid future confusion
-predictAttrFilledIn = predictAttr
-# use the predicted values
-
-predictAttrFilledIn
-
-predictAttrFilledIn$Attrition = predictAttritionResultsValidation
-predictAttrWithID = predictAttrFilledIn[, c("ID", "Attrition")]
-write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv")
-predictAttrWithEmployeeNumber = predictAttrFilledIn[, c("EmployeeNumber", "Attrition")]
-write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv")
-
 # and print out a nice confusion matrix
 
 draw_confusion_matrix <- function(cmtrx) {
@@ -613,7 +671,7 @@ for(j in 1:iterations)
   
   predictAttrBayes = predict(modelBayes, testData)
 
-  CM = confusionMatrix(table(predictAttrBayes, as.factor(testData$Attrition)))
+  CM = confusionMatrix(table(predictAttrBayes, as.factor(testData$Attrition)),positive="Yes")
   masterAcc[j,1] = CM$overall[1]
   masterSens[j,1] = CM$byClass[1][[1]] # sensitivity
   masterSpec[j,1] = CM$byClass[2][[1]] # specificity
@@ -691,7 +749,9 @@ line <- "#1F3552"
 ggplot(data=trainAndAttrit, aes(trainAndAttrit$MonthlyIncome)) + 
   geom_histogram() + theme_economist() + ggtitle("Histogram of Monthly Income") + xlab("Monthly Income")
 
-ggplot(trainAndAttrit, aes(x=Age, y=MonthlyIncome), xlab="Age", ylab="Monthly Income") + ggtitle("Age vs Daily Rate") + geom_point() + geom_smooth(method=loess) + theme_economist()
+paste("Mean monthly income is:",mean(trainAndAttrit$MonthlyIncome))
+
+ggplot(trainAndAttrit, aes(x=Age, y=MonthlyIncome), xlab="Age", ylab="Monthly Income") + ggtitle("Age vs Monthly Income") + geom_point() + geom_smooth(method=loess) + theme_economist()
 
 
 ggplot(trainAndAttrit, aes(x = BusinessTravel, y = MonthlyIncome)) +
@@ -845,7 +905,7 @@ ggplot(trainAndAttrit, aes(x=YearsWithCurrManager, y=MonthlyIncome), xlab="Years
 ageRelated = c(2, 20,30, 33, 34, 35, 36)
 pairs(train[,ageRelated], pch=19)
 
-ggplot(trainAndAttrit, aes(x=NumCompaniesWorked, y=TotalWorkingYears), xlab="Number of COmpanies Worked", ylab="Total Working Years") + ggtitle("Number of Companies Worked vs Total Working Years") + xlab("Number of Companies Worked") + ylab("Total Working Companies") + geom_point() + geom_smooth(method=loess) + theme_economist()
+ggplot(trainAndAttrit, aes(x=NumCompaniesWorked, y=TotalWorkingYears), xlab="Number of COmpanies Worked", ylab="Total Working Years") + ggtitle("Number of Companies Worked vs Total Working Years") + xlab("Number of Companies Worked") + ylab("Total Working Years") + geom_point() + geom_smooth(method=loess) + theme_economist()
 
 
 ```
@@ -904,9 +964,11 @@ predictMonthlyIncomeFilledIn = predictMonthIncome
 
 predictMonthlyIncomeFilledIn$MonthlyIncome = predictMonthlyIncomeResultsValidation
 predictMonthlyIncomeWithID = predictMonthlyIncomeFilledIn[, c("ID", "MonthlyIncome")]
-write.csv(predictMonthlyIncomeWithID, file="Case2PredictionsPaugh Salary.csv")
+
+
+write.csv(predictMonthlyIncomeWithID, file="Case2PredictionsPaugh Salary.csv", row.names=FALSE)
 predictMonthlyIncomeWithEmployeeNumber = predictMonthlyIncomeFilledIn[, c("EmployeeNumber", "MonthlyIncome")]
-write.csv(predictMonthlyIncomeWithEmployeeNumber, file="Case2PredictionsByENMonthlyIncome.csv")
+write.csv(predictMonthlyIncomeWithEmployeeNumber, file="Case2PredictionsByENMonthlyIncome.csv", row.names=FALSE)
 
 ```
 
@@ -1012,7 +1074,7 @@ summary(rfModel)
 predictAttritionRF = predict(rfModel, train)
 
 
-CM = confusionMatrix(table(predictAttritionRF,train$Attrition))
+CM = confusionMatrix(table(predictAttritionRF,train$Attrition),positive="Yes")
 CM
 
 
@@ -1139,31 +1201,6 @@ draw_confusion_matrix(CM)
 ```
 
 
-# Use the RF model to predict with our validation data.
-# Then take the output of the prior RF based approach to predicting the monthlyIncome and write out to seperate files, one file by ID and another file by employee number
-
-```{r}
-
-
-predictAttritionResultsValidation = predict(rfModel, newdata =  predictAttr)
-
-# create a separate dataset with attrition filled in to avoid future confusion
-predictAttrFilledIn = predictAttr
-# use the predicted values
-
-predictAttrFilledIn
-
-predictAttrFilledIn$Attrition = predictAttritionResultsValidation
-predictAttrWithID = predictAttrFilledIn[, c("ID", "Attrition")]
-write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv")
-predictAttrWithEmployeeNumber = predictAttrFilledIn[, c("EmployeeNumber", "Attrition")]
-write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv")
-
-```
-
-
-
-
 #let's try using randem forest for attrition, but this time let's try varying the # of trees to see what effect this has.
 ## The results show that the # of trees really doesn't change things
 
@@ -1189,7 +1226,7 @@ testData = train[-trainIndices,]
   
   predictAttritionRF = predict(rfModelTest, newdata=testData)
 
-  CM = confusionMatrix(table(predictAttritionRF, as.factor(testData$Attrition)))
+  CM = confusionMatrix(table(predictAttritionRF, as.factor(testData$Attrition)),positive="Yes")
   masterAcc[j,1] = CM$overall[1]
   masterSens[j,1] = CM$byClass[1][[1]] # sensitivity
   masterSpec[j,1] = CM$byClass[2][[1]] # specificity
@@ -1220,7 +1257,7 @@ suppressMessages(library(ROCR))
 # use the value with the monthly income filled in! Use our calculated values - they may be useful for predicting attrition
 trainAndMonthly = rbind(train, predictMonthlyIncomeFilledIn)
 
-includeForLogReg = c(2,3,4,5,6,7,8,9,12,13,14,15,16,17,18,19,20,21,22,24,25,26,27,28,29.30,31,32,33,34,35,36,37,38,39)
+includeForLogReg = c(2,3,4,5,6,7,8,9,12,13,14,15,16,17,18,19,20,21,22,24,25,26,27,28,29.30,31,32,33,34,35,36)
 
 logRegModel <- glm(Attrition ~ ., data=trainAndMonthly[includeForLogReg], family = "binomial") %>%
   stepAIC(trace = FALSE)
@@ -1235,7 +1272,7 @@ predictAttrLogisticRegresion <- as.factor(predictAttrLogisticRegresion)
 length(predictAttrLogisticRegresion)
 
 
-CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition))
+CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition), positive="Yes")
 CM
 
 # let's lot the ROC curve
@@ -1246,31 +1283,6 @@ plot(ROCRPerf,colorize = TRUE, print.cutoffs.at = seq(0.1, by = 0.1))
 
 
 ```
-
-# using a very low threshold here to make sure the specificity is higher than our 0.6 goal, even if it results in lower accuracy.
-
-```{r}
-
-
-predictAttritionResultsValidationProbs = predict(logRegModel, predictAttr, inverval="predict", type = "response")
-
-predictAttritionResultsValidation <- ifelse(predictAttritionResultsValidationProbs > 0.12, "Yes", "No")
-
-# create a separate dataset with attrition filled in to avoid future confusion
-predictAttrFilledIn = predictAttr
-# use the predicted values
-
-
-predictAttrFilledIn$Attrition = predictAttritionResultsValidation
-predictAttrWithID = predictAttrFilledIn[, c("ID", "Attrition")]
-write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv")
-predictAttrWithEmployeeNumber = predictAttrFilledIn[, c("EmployeeNumber", "Attrition")]
-write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv")
-
-
-```
-
-
 
 # Show AIC Linear regression Confision Matrix
 
@@ -1407,7 +1419,7 @@ str(predictAttrLogisticRegresion)
 str(train$Attrition)
 head(predictAttrLogisticRegresion)
 
-CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition))
+CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition),positive="Yes")
 CM
 
 
@@ -1446,7 +1458,7 @@ logRegModel <- glm(Attrition ~ ., data=trainAndMonthly[includeForLogReg], family
   length(predictAttrLogisticRegresion)
   
   
-  CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition))
+  CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition),positive="Yes")
   CM
   
   
@@ -1476,9 +1488,9 @@ suppressMessages(library(ROCR))
 # use the value with the monthly income filled in! Use our calculated values - they may be useful for predicting attrition
 trainAndMonthly = rbind(train, predictMonthlyIncomeFilledIn)
 
-includeForLogReg = c(2,3,4,5,6,7,8,9,12,13,14,15,16,17,18,19,20,21,22,24,25,26,27,28,29.30,31,32,33,34,35,36,37,38,39)
+includeForLogReg = c(2,3,4,5,6,7,8,9,12,13,14,15,16,17,18,19,20,21,22,24,25,26,27,28,29.30,31,32,33,34,35,36)
 
-logRegModel <- glm(Attrition ~ Age + BusinessTravel + DailyRate +  DistanceFromHome +  Education + EnvironmentSatisfaction + HourlyRate + JobLevel  + JobRole  + NumCompaniesWorked + OverTime + StockOptionLevel + WorkLifeBalance + YearsAtCompany  + YearsSinceLastPromotion, data=trainAndMonthly[includeForLogReg], family = "binomial") 
+logRegModel <- glm(Attrition ~ Age + BusinessTravel + DailyRate +  DistanceFromHome +  EnvironmentSatisfaction + HourlyRate + JobLevel  + JobRole + JobSatisfaction  + NumCompaniesWorked + OverTime + StockOptionLevel + WorkLifeBalance + YearsAtCompany  + YearsSinceLastPromotion, data=trainAndMonthly[includeForLogReg], family = "binomial") 
 summary(logRegModel)
 
 predictAttrLogisticRegresionProbs = predict(logRegModel, trainAndMonthly, inverval="predict", type = "response")
@@ -1490,7 +1502,7 @@ predictAttrLogisticRegresion <- as.factor(predictAttrLogisticRegresion)
 length(predictAttrLogisticRegresion)
 
 
-CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition))
+CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition),positive="Yes")
 CM
 
 # let's lot the ROC curve
@@ -1517,9 +1529,9 @@ predictAttrFilledIn = predictAttr
 
 predictAttrFilledIn$Attrition = predictAttritionResultsValidation
 predictAttrWithID = predictAttrFilledIn[, c("ID", "Attrition")]
-write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv")
+write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv", row.names=FALSE)
 predictAttrWithEmployeeNumber = predictAttrFilledIn[, c("EmployeeNumber", "Attrition")]
-write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv")
+write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv", row.names=FALSE)
 
 
 ```
@@ -1548,7 +1560,7 @@ for(j in 1:iterations)
   trainData = trainAndMonthly[trainIndices,]
   testData = trainAndMonthly[-trainIndices,]
   
-  logRegModel <- glm(Attrition ~ Age + BusinessTravel + DailyRate +  DistanceFromHome +  Education + EnvironmentSatisfaction + HourlyRate + JobLevel  + JobRole  + NumCompaniesWorked + OverTime + StockOptionLevel + WorkLifeBalance + YearsAtCompany  + YearsSinceLastPromotion, data=trainData, family = "binomial")
+  logRegModel <- glm(Attrition ~ Age + BusinessTravel + DailyRate +  DistanceFromHome +  Education + EnvironmentSatisfaction + HourlyRate + JobLevel  + JobRole  + JobSatisfaction  +  NumCompaniesWorked + OverTime + StockOptionLevel + WorkLifeBalance + YearsAtCompany  + YearsSinceLastPromotion, data=trainData, family = "binomial")
 
   predictAttrLogisticRegresionProbs = predict(logRegModel, testData, inverval="predict", type = "response")
   
@@ -1560,7 +1572,7 @@ for(j in 1:iterations)
     predictAttrLogisticRegresion <- as.factor(predictAttrLogisticRegresion)
   
     levels(predictAttrLogisticRegresion) = levels(testData$Attrition)
-    CM = confusionMatrix(table(predictAttrLogisticRegresion, as.factor(testData$Attrition)))
+    CM = confusionMatrix(table(predictAttrLogisticRegresion, as.factor(testData$Attrition)),positive="Yes")
     masterAcc[j,i] = CM$overall[1]
     masterSens[j,i] = CM$byClass[1][[1]] # sensitivity
     masterSpec[j,i] = CM$byClass[2][[1]] # specificity
@@ -1595,6 +1607,28 @@ which.max(MeanCombined)
 thresholdValues[which.max(MeanCombined)]
 max(MeanCombined)
 
+dfTestingResults = data.frame(MeanCombined)
+names(dfTestingResults)[1]<-"Sum"
+dfTestingResults$Threshold =thresholdValues
+dfTestingResults$Specificity = MeanSpec
+dfTestingResults$Sensitivity = MeanSens
+#dfTestingResults
+
+
+# this works but it does not show a group name
+p = ggplot() + 
+  geom_line(data = dfTestingResults, aes(x = Threshold, y = MeanSpec), color = "blue") +
+  geom_line(data = dfTestingResults, aes(x = Threshold, y = MeanSens), color = "red") +
+  geom_line(data = dfTestingResults, aes(x = Threshold, y = Sum), color = "green") +
+  xlab('Dates') +
+  ylab('percent.change') + theme_economist()
+p
+
+dfMeltThresholdData <- melt(dfTestingResults, id.vars="Threshold", value.name="value")
+ggplot(dfMeltThresholdData, aes(x=Threshold, y=value, color=variable)) + ylab("Value") + ggtitle("Test Results by Threshold") +
+  geom_point()
+
+
 
 
 ```
@@ -1615,6 +1649,7 @@ max(MeanCombined)
 ```{r}
 
 #str(trainAndMonthly)
+trainAndMonthly = rbind(train, predictMonthlyIncomeFilledIn)
 
 includeForLogReg = c(2,3,4,5,6,7,8,9,12, 13,14,15,16,17,18,19,21,22,24,25,26,27,28,29.30,31,32,33,34,35,36)
 
@@ -1639,7 +1674,7 @@ str(predictAttrLogisticRegresion)
 str(train$Attrition)
 head(predictAttrLogisticRegresion)
 
-CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition))
+CM = confusionMatrix(table(predictAttrLogisticRegresion,trainAndMonthly$Attrition),positive="Yes")
 CM
 
 # let's lot the ROC curve
@@ -1668,9 +1703,9 @@ predictAttrFilledIn = predictAttr
 
 predictAttrFilledIn$Attrition = predictAttritionResultsValidation
 predictAttrWithID = predictAttrFilledIn[, c("ID", "Attrition")]
-write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv")
+write.csv(predictAttrWithID, file="Case2PredictionsPaugh Attrition.csv", row.names=FALSE)
 predictAttrWithEmployeeNumber = predictAttrFilledIn[, c("EmployeeNumber", "Attrition")]
-write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv")
+write.csv(predictAttrWithEmployeeNumber, file="Case2PredictionsByENAttrition.csv", row.names=FALSE)
 
 
 ```
@@ -1715,7 +1750,7 @@ for(j in 1:iterations)
     predictAttrLogisticRegresion <- as.factor(predictAttrLogisticRegresion)
   
     levels(predictAttrLogisticRegresion) = levels(testData$Attrition)
-    CM = confusionMatrix(table(predictAttrLogisticRegresion, as.factor(testData$Attrition)))
+    CM = confusionMatrix(table(predictAttrLogisticRegresion, as.factor(testData$Attrition)),positive="Yes")
     masterAcc[j,i] = CM$overall[1]
     masterSens[j,i] = CM$byClass[1][[1]] # sensitivity
     masterSpec[j,i] = CM$byClass[2][[1]] # specificity
@@ -1750,72 +1785,26 @@ which.max(MeanCombined)
 thresholdValues[which.max(MeanCombined)]
 max(MeanCombined)
 
-
-```
-
-
-# But wait! We are just beginning to data science!
-# Let's try XGBoost! 
-### first setup
-
-```{r}
-install.packages("drat", repos="https://cran.rstudio.com")
-drat:::addRepo("dmlc")
-install.packages("xgboost")
-```
+dfTestingResults <- data.frame(MeanCombined)
+dfTestingResults <- dfTestingResults %>% rename(    Sum = MeanCombined    )
+dfTestingResults$Threshold =thresholdValues
+dfTestingResults$Specificity = MeanSpec
+dfTestingResults$Sensitivity = MeanSens
+dfTestingResults
 
 
-```{r}
+# this works but it does not show a group name
+p = ggplot() + 
+  geom_line(data = dfTestingResults, aes(x = Threshold, y = MeanSpec), color = "blue") +
+  geom_line(data = dfTestingResults, aes(x = Threshold, y = MeanSens), color = "red") +
+  geom_line(data = dfTestingResults, aes(x = Threshold, y = Sum), color = "green") +
+  xlab('Dates') +
+  ylab('percent.change') + theme_economist()
+p
 
-library(drat)
-library(xgboost)
-library(data.table)
-
-numericFields = c(2,7,14,25)
-
-trainAndMonthly[,3]
-
-trainAndMonthlyForBoost.data = as.matrix(trainAndMonthly[,c(2,7,14,25)])
-trainAndMonthlyForBoost.label <- trainAndMonthly[-3] %>% mutate(AttritionNumeric = case_when(
-        Attrition  == "Yes"  ~ 1,
-        Attrition == "No"  ~ 0)) %>% pull(AttritionNumeric)
-
-
-trainXgb.index = sample(n,floor(0.75*n))
-trainXgb.data = as.matrix(trainAndMonthlyForBoost.data[trainXgb.index,])
-trainXgb.label = trainAndMonthlyForBoost.label[trainXgb.index]
-testXgb.data = as.matrix(trainAndMonthlyForBoost.data[-trainXgb.index,])
-testXgb.label = trainAndMonthlyForBoost.label[-trainXgb.index]
-
-str(trainXgb.data)
-str(testXgb.data)
-
-xgb.train = xgb.DMatrix(data=trainXgb.data, label=trainXgb.index)
-xgb.test = xgb.DMatrix(data=testXgb.data,label=testXgb.label)
-
-num_class = 2
-params = list(
-  booster="gbtree",
-  eta=0.001,
-  max_depth=5,
-  gamma=3,
-  subsample=0.75,
-  colsample_bytree=1,
-  objective="multi:softprob",
-  eval_metric="mlogloss",
-  num_class=num_class
-)
-
-
-xgb.fit=xgb.train(
-  params=params,
-  data=xgb.train,
-  nrounds=10000,
-  nthreads=1,
-  early_stopping_rounds=10,
-  watchlist=list(val1=xgb.train,val2=xgb.test),
-  verbose=0
-)
+dfMeltThresholdData <- melt(dfTestingResults, id.vars="Threshold", value.name="value")
+ggplot(dfMeltThresholdData, aes(x=Threshold, y=value, color=variable)) + 
+  geom_point()
 
 
 

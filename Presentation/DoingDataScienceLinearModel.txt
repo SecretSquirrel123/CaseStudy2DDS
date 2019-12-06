@@ -1,0 +1,17 @@
+(Intercept)                       4536.962    752.437   6.030 2.21e-09 ***
+Age                                 59.730      6.663   8.964  < 2e-16 ***
+JobRoleHuman Resources           -3889.820    729.640  -5.331 1.17e-07 ***
+JobRoleLaboratory Technician     -3739.670    224.833 -16.633  < 2e-16 ***
+JobRoleManager                    8513.764    355.195  23.969  < 2e-16 ***
+JobRoleManufacturing Director      -58.057    247.519  -0.235   0.8146    
+JobRoleResearch Director          8017.147    287.928  27.844  < 2e-16 ***
+JobRoleResearch Scientist        -3757.595    220.849 -17.014  < 2e-16 ***
+JobRoleSales Executive            -332.455    492.103  -0.676   0.4994    
+JobRoleSales Representative      -3796.217    537.467  -7.063 2.81e-12 ***
+DepartmentResearch & Development  -541.770    631.147  -0.858   0.3909    
+DepartmentSales                   -625.344    645.685  -0.968   0.3330    
+PerformanceRating4                -273.536    150.438  -1.818   0.0693 .  
+WorkLifeBalance2                   510.874    260.756   1.959   0.0503 .  
+WorkLifeBalance3                   463.758    245.145   1.892   0.0588 .  
+WorkLifeBalance4                   144.179    286.823   0.503   0.6153    
+YearsAtCompany                     105.031      9.674  10.857  < 2e-16 ***
